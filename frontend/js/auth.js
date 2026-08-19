@@ -24,7 +24,13 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 
   const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
   if (error) {
-    errorEl.textContent = "Identifiants incorrects. Vérifiez votre e-mail et mot de passe.";
+    if (error.message.includes('Email not confirmed')) {
+      errorEl.textContent = "Votre e-mail n'est pas encore confirmé. Vérifiez votre boîte de réception (et vos spams) pour le lien de confirmation.";
+    } else if (error.message.includes('Invalid login credentials')) {
+      errorEl.textContent = "E-mail ou mot de passe incorrect.";
+    } else {
+      errorEl.textContent = error.message;
+    }
     return;
   }
   window.location.href = 'app.html';
@@ -38,7 +44,7 @@ document.getElementById('signup-form').addEventListener('submit', async (e) => {
   const errorEl = document.getElementById('signup-error');
   errorEl.textContent = '';
 
-  const { error } = await supabaseClient.auth.signUp({
+  const { data, error } = await supabaseClient.auth.signUp({
     email,
     password,
     options: { data: { full_name } }
@@ -47,5 +53,18 @@ document.getElementById('signup-form').addEventListener('submit', async (e) => {
     errorEl.textContent = error.message;
     return;
   }
+
+  // Si Supabase exige une confirmation par e-mail, il n'y a pas de session immédiate
+  if (!data.session) {
+    document.getElementById('signup-form').innerHTML = `
+      <div style="padding:16px;background:#F4F1EA;border-radius:10px;font-size:0.9rem;line-height:1.5;">
+        <strong>Compte créé !</strong><br/>
+        Un e-mail de confirmation a été envoyé à <strong>${email}</strong>.
+        Cliquez sur le lien qu'il contient, puis revenez vous connecter ici.
+        <br/><br/>Pensez à vérifier vos spams si vous ne le voyez pas sous 1 à 2 minutes.
+      </div>`;
+    return;
+  }
+
   window.location.href = 'app.html';
 });
