@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Carnet — L'espace numérique de votre école</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="auth-shell">
+  <div class="auth-brand">
+    <div class="brand-mark">Carnet</div>
+    <p class="brand-tag">L'espace numérique de votre école</p>
+    <ul class="brand-features">
+      <li>Classes, matières &amp; emplois du temps</li>
+      <li>Devoirs et notes en un seul endroit</li>
+      <li>Un portail dédié pour les parents</li>
+    </ul>
+  </div>
+
+  <div class="auth-card">
+    <div class="tabs">
+      <button class="tab active" data-tab="login">Connexion</button>
+      <button class="tab" data-tab="signup">Créer un compte</button>
+    </div>
+
+    <form id="login-form" class="auth-form">
+      <label>Adresse e-mail
+        <input type="email" id="login-email" required placeholder="vous@ecole.bj" />
+      </label>
+      <label>Mot de passe
+        <input type="password" id="login-password" required placeholder="••••••••" />
+      </label>
+      <button type="submit" class="btn-primary">Se connecter</button>
+      <p class="form-error" id="login-error"></p>
+    </form>
+
+    <form id="signup-form" class="auth-form hidden">
+      <label>Nom complet
+        <input type="text" id="signup-name" required placeholder="Ex : Aïcha Dossou" />
+      </label>
+      <label>Adresse e-mail
+        <input type="email" id="signup-email" required placeholder="vous@ecole.bj" />
+      </label>
+      <label>Mot de passe
+        <input type="password" id="signup-password" required minlength="6" placeholder="6 caractères min." />
+      </label>
+      <button type="submit" class="btn-primary">Créer mon compte</button>
+      <p class="form-hint">Après inscription, un administrateur d'école devra vous rattacher à votre établissement.</p>
+      <p class="form-error" id="signup-error"></p>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/auth.js"></script>
+</body>
+</html>
