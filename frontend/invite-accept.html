@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Carnet — Activer mon compte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="auth-shell">
+  <div class="auth-brand">
+    <div class="brand-mark">Carnet</div>
+    <p class="brand-tag">Bienvenue ! Définissez votre mot de passe pour accéder au portail parent.</p>
+  </div>
+
+  <div class="auth-card">
+    <h2 style="font-family:var(--font-display);margin-top:0;">Activer mon compte</h2>
+    <div id="status" style="font-size:0.9rem;color:var(--ink-soft);margin-bottom:16px;">Vérification de votre invitation…</div>
+
+    <form id="set-password-form" class="auth-form hidden">
+      <label>Nouveau mot de passe
+        <input type="password" id="new-password" required minlength="6" placeholder="6 caractères min." />
+      </label>
+      <label>Confirmer le mot de passe
+        <input type="password" id="confirm-password" required minlength="6" />
+      </label>
+      <button type="submit" class="btn-primary">Activer mon compte</button>
+      <p class="form-error" id="form-error"></p>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/supabaseClient.js"></script>
+<script>
+(async () => {
+  const statusEl = document.getElementById('status');
+  const form = document.getElementById('set-password-form');
+
+  // supabase-js détecte automatiquement le token d'invitation présent dans l'URL
+  // et crée une session — on attend juste qu'elle soit disponible.
+  const { data, error } = await supabaseClient.auth.getSession();
+
+  if (error || !data.session) {
+    statusEl.textContent = "Lien d'invitation invalide ou expiré. Contactez l'administration de votre école pour un nouveau lien.";
+    return;
+  }
+
+  statusEl.textContent = `Compte : ${data.session.user.email}`;
+  form.classList.remove('hidden');
+})();
+
+document.getElementById('set-password-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pwd = document.getElementById('new-password').value;
+  const confirm = document.getElementById('confirm-password').value;
+  const errorEl = document.getElementById('form-error');
+  errorEl.textContent = '';
+
+  if (pwd !== confirm) {
+    errorEl.textContent = 'Les mots de passe ne correspondent pas.';
+    return;
+  }
+
+  const { error } = await supabaseClient.auth.updateUser({ password: pwd });
+  if (error) {
+    errorEl.textContent = error.message;
+    return;
+  }
+  window.location.href = 'app.html';
+});
+</script>
+</body>
+</html>
