@@ -730,7 +730,10 @@ Views.renderMembers = async function (container) {
   container.innerHTML = `
     <div class="main-header">
       <h1 class="main-title">Membres de l'école</h1>
-      <button class="btn-primary" id="add-member-btn">+ Ajouter un membre</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" id="invite-parent-btn">✉️ Inviter un parent</button>
+        <button class="btn-primary" id="add-member-btn">+ Ajouter un membre</button>
+      </div>
     </div>
     <hr class="ruled" />
     <div class="grid grid-2">
@@ -747,10 +750,48 @@ Views.renderMembers = async function (container) {
       `).join('')}
     </div>
     <p style="font-size:0.82rem;color:var(--ink-soft);margin-top:20px;">
-      Pour ajouter un membre, la personne doit d'abord créer un compte (page de connexion), puis vous renseignez son identifiant utilisateur ici.
+      Pour un parent, utilisez "Inviter un parent" : un e-mail lui est envoyé automatiquement et il est lié directement à son enfant.
+      Pour les autres rôles, la personne doit d'abord créer un compte (page de connexion), puis vous renseignez son identifiant utilisateur ici.
       Pour un élève, le matricule est généré automatiquement.
     </p>
   `;
+
+  document.getElementById('invite-parent-btn').addEventListener('click', async () => {
+    const students = await Api.get(`/schools/${State.school.id}/members?role=eleve`);
+    openModal(`
+      <h3>Inviter un parent</h3>
+      <label>Nom complet du parent (optionnel)<input id="m-name" placeholder="Ex : Mariam Dossou" /></label>
+      <label>E-mail du parent<input id="m-email" type="email" required placeholder="parent@email.com" /></label>
+      <label>Enfant à lier<select id="m-child">
+        ${students.length === 0 ? '<option value="">Aucun élève enregistré</option>' :
+          students.map((s) => `<option value="${s.profiles.id}">${esc(s.profiles.full_name)}${s.student_number ? ' — ' + esc(s.student_number) : ''}</option>`).join('')}
+      </select></label>
+      <p style="font-size:0.8rem;color:var(--ink-soft);">
+        Un e-mail d'invitation sera envoyé automatiquement. Si cette adresse a déjà un compte Carnet, il sera directement lié, sans e-mail.
+      </p>
+      <div class="modal-actions">
+        <button class="link-btn" id="m-cancel">Annuler</button>
+        <button class="btn-primary" id="m-save">Envoyer l'invitation</button>
+      </div>`);
+    document.getElementById('m-cancel').addEventListener('click', closeModal);
+    document.getElementById('m-save').addEventListener('click', async () => {
+      const email = document.getElementById('m-email').value.trim();
+      const full_name = document.getElementById('m-name').value.trim();
+      const child_id = document.getElementById('m-child').value;
+      if (!email || !child_id) {
+        alert('Merci de renseigner un e-mail et de choisir un enfant.');
+        return;
+      }
+      try {
+        const res = await Api.post(`/schools/${State.school.id}/invite-parent`, { email, full_name, child_id });
+        closeModal();
+        alert(res.message);
+        navigateTo('members');
+      } catch (err) {
+        alert("Erreur : " + (err.error || "impossible d'envoyer l'invitation."));
+      }
+    });
+  });
 
   document.getElementById('add-member-btn').addEventListener('click', () => {
     openModal(`

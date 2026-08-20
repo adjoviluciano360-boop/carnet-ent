@@ -95,7 +95,7 @@ router.get('/:schoolId/students/by-number/:studentNumber', requireAuth, requireS
   res.json(data);
 });
 
-// Lier un parent à un enfant
+// Lier un parent à un enfant (le parent doit déjà être membre — voir invite-parent pour le flux complet)
 router.post('/:schoolId/parent-links', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
   const { parent_id, child_id } = req.body;
   const { data, error } = await supabaseAdmin
@@ -105,6 +105,55 @@ router.post('/:schoolId/parent-links', requireAuth, requireSchoolRole(['admin'])
     .single();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json(data);
+});
+
+// Inviter un parent par e-mail et le lier directement à son enfant.
+// Envoie un e-mail d'invitation via Supabase Auth (crée le compte s'il n'existe pas encore).
+// Si l'adresse a déjà un compte, on le retrouve et on le lie directement (pas de doublon d'e-mail).
+router.post('/:schoolId/invite-parent', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { email, full_name, child_id } = req.body;
+  if (!email || !child_id) return res.status(400).json({ error: 'email et child_id requis' });
+
+  let userId;
+  let invited = false;
+
+  const { data: inviteData, error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${process.env.FRONTEND_URL}/invite-accept.html`,
+    data: full_name ? { full_name } : undefined
+  });
+
+  if (inviteErr) {
+    // Adresse déjà enregistrée : on retrouve le compte existant plutôt que d'échouer
+    const alreadyExists = /already.*registered|already.*exist/i.test(inviteErr.message || '');
+    if (!alreadyExists) return res.status(400).json({ error: inviteErr.message });
+
+    const { data: list, error: listErr } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (listErr) return res.status(400).json({ error: listErr.message });
+    const existing = list.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    if (!existing) return res.status(400).json({ error: "Impossible de retrouver ce compte existant." });
+    userId = existing.id;
+  } else {
+    userId = inviteData.user.id;
+    invited = true;
+  }
+
+  const { error: memberErr } = await supabaseAdmin
+    .from('school_members')
+    .insert({ school_id: req.schoolId, user_id: userId, role: 'parent' });
+  if (memberErr && memberErr.code !== '23505') return res.status(400).json({ error: memberErr.message });
+
+  const { error: linkErr } = await supabaseAdmin
+    .from('parent_child_links')
+    .insert({ school_id: req.schoolId, parent_id: userId, child_id });
+  if (linkErr && linkErr.code !== '23505') return res.status(400).json({ error: linkErr.message });
+
+  res.status(201).json({
+    ok: true,
+    invited,
+    message: invited
+      ? "Invitation envoyée par e-mail."
+      : "Ce compte existait déjà : le parent a été directement lié à l'enfant (aucun e-mail envoyé)."
+  });
 });
 
 // Régler les poids interro/devoir par défaut de l'école
