@@ -3,6 +3,17 @@ import { supabaseAdmin, requireAuth, requireSchoolRole } from '../middleware/aut
 
 const router = Router();
 
+// Annuaire public des écoles — AUCUNE authentification requise
+// N'expose que des informations non sensibles (nom, ville, filières)
+router.get('/public', async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('schools')
+    .select('id, name, slug, city, country, tracks(id, name)')
+    .order('name');
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
 // Créer une école (le créateur devient admin automatiquement)
 router.post('/', requireAuth, async (req, res) => {
   const { name, slug, city, country } = req.body;
@@ -97,8 +108,7 @@ router.post('/:schoolId/parent-links', requireAuth, requireSchoolRole(['admin'])
 });
 
 // Régler les poids interro/devoir par défaut de l'école
-router.put('/:schoolId/weights', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
-  const { default_interro_weight, default_devoir_weight } = req.body;
+router.put('/:schoolId/weights', requireAuth, requireSchoolRole(['admin']), async (req, res) => {  const { default_interro_weight, default_devoir_weight } = req.body;
   const { data, error } = await supabaseAdmin
     .from('schools')
     .update({ default_interro_weight, default_devoir_weight })
@@ -107,6 +117,78 @@ router.put('/:schoolId/weights', requireAuth, requireSchoolRole(['admin']), asyn
     .single();
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
+});
+
+// ---- CANDIDATURES DE PROFESSEURS ----
+
+// Postuler pour enseigner dans une école (utilisateur connecté, pas encore forcément membre)
+router.post('/:schoolId/apply', requireAuth, async (req, res) => {
+  const { message } = req.body;
+  const { data, error } = await supabaseAdmin
+    .from('teacher_applications')
+    .insert({ school_id: req.params.schoolId, user_id: req.user.id, message: message || null })
+    .select()
+    .single();
+  if (error) {
+    if (error.code === '23505') return res.status(400).json({ error: 'Vous avez déjà postulé dans cette école.' });
+    return res.status(400).json({ error: error.message });
+  }
+  res.status(201).json(data);
+});
+
+// Mes candidatures (utilisateur connecté)
+router.get('/applications/mine', requireAuth, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('teacher_applications')
+    .select('*, schools(name, city)')
+    .eq('user_id', req.user.id)
+    .order('created_at', { ascending: false });
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// Candidatures reçues par une école (admin uniquement)
+router.get('/:schoolId/applications', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  let query = supabaseAdmin
+    .from('teacher_applications')
+    .select('*, profiles(id, full_name, phone)')
+    .eq('school_id', req.schoolId)
+    .order('created_at', { ascending: false });
+  if (req.query.status) query = query.eq('status', req.query.status);
+
+  const { data, error } = await query;
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// Accepter ou refuser une candidature (admin uniquement)
+// En cas d'acceptation, le candidat devient automatiquement membre 'prof' de l'école
+router.put('/:schoolId/applications/:appId', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { status } = req.body; // 'accepted' | 'rejected'
+  if (!['accepted', 'rejected'].includes(status)) {
+    return res.status(400).json({ error: "status doit être 'accepted' ou 'rejected'" });
+  }
+
+  const { data: application, error: appErr } = await supabaseAdmin
+    .from('teacher_applications')
+    .update({ status, reviewed_at: new Date().toISOString() })
+    .eq('id', req.params.appId)
+    .eq('school_id', req.schoolId)
+    .select()
+    .single();
+  if (appErr) return res.status(400).json({ error: appErr.message });
+
+  if (status === 'accepted') {
+    const { error: memberErr } = await supabaseAdmin
+      .from('school_members')
+      .insert({ school_id: req.schoolId, user_id: application.user_id, role: 'prof' })
+      .select()
+      .maybeSingle();
+    // Si déjà membre (ex: doublon), on ignore silencieusement l'erreur de contrainte unique
+    if (memberErr && memberErr.code !== '23505') return res.status(400).json({ error: memberErr.message });
+  }
+
+  res.json(application);
 });
 
 export default router;

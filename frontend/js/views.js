@@ -769,12 +769,78 @@ Views.renderMembers = async function (container) {
       </div>`);
     document.getElementById('m-cancel').addEventListener('click', closeModal);
     document.getElementById('m-save').addEventListener('click', async () => {
-      await Api.post(`/schools/${State.school.id}/members`, {
-        user_id: document.getElementById('m-uid').value,
-        role: document.getElementById('m-role').value
-      });
-      closeModal();
-      navigateTo('members');
+      const user_id = document.getElementById('m-uid').value.trim();
+      const role = document.getElementById('m-role').value;
+      if (!user_id) {
+        alert("Merci de coller l'UUID de l'utilisateur (visible dans Supabase → Authentication → Users).");
+        return;
+      }
+      try {
+        await Api.post(`/schools/${State.school.id}/members`, { user_id, role });
+        closeModal();
+        navigateTo('members');
+      } catch (err) {
+        alert("Erreur : " + (err.error || 'impossible d\'ajouter ce membre.'));
+      }
+    });
+  });
+};
+
+// ============================================================
+// CANDIDATURES DE PROFESSEURS (admin)
+// ============================================================
+Views.renderApplications = async function (container) {
+  const [pending, others] = await Promise.all([
+    Api.get(`/schools/${State.school.id}/applications?status=pending`),
+    Api.get(`/schools/${State.school.id}/applications`)
+  ]);
+  const reviewed = others.filter((a) => a.status !== 'pending');
+
+  container.innerHTML = `
+    <div class="main-header"><h1 class="main-title">Candidatures</h1></div>
+    <hr class="ruled" />
+    <div class="card" style="margin-bottom:24px;">
+      <div class="card-title">En attente (${pending.length})</div>
+      <div id="pending-holder">
+        ${pending.length === 0 ? '<div class="empty-state">Aucune candidature en attente.</div>' :
+          pending.map((a) => `
+            <div class="card" style="margin-bottom:12px;background:var(--paper);">
+              <div class="card-title">
+                ${esc(a.profiles.full_name)}
+                <span class="pill pill-amber">En attente</span>
+              </div>
+              ${a.message ? `<p style="font-size:0.88rem;">${esc(a.message)}</p>` : ''}
+              <div class="card-eyebrow">Reçue le ${fmtDate(a.created_at)}</div>
+              <div class="modal-actions" style="justify-content:flex-start;margin-top:12px;">
+                <button class="btn-primary" data-accept="${a.id}">Accepter</button>
+                <button class="btn-secondary" data-reject="${a.id}">Refuser</button>
+              </div>
+            </div>
+          `).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Historique (${reviewed.length})</div>
+      ${reviewed.length === 0 ? '<div class="empty-state">Aucune candidature traitée.</div>' :
+        reviewed.map((a) => `
+          <div class="list-row">
+            <span>${esc(a.profiles.full_name)}</span>
+            <span class="pill ${a.status === 'accepted' ? 'pill-sage' : 'pill-red'}">${a.status === 'accepted' ? 'Acceptée' : 'Refusée'}</span>
+          </div>
+        `).join('')}
+    </div>
+  `;
+
+  document.querySelectorAll('[data-accept]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await Api.put(`/schools/${State.school.id}/applications/${btn.dataset.accept}`, { status: 'accepted' });
+      navigateTo('applications');
+    });
+  });
+  document.querySelectorAll('[data-reject]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await Api.put(`/schools/${State.school.id}/applications/${btn.dataset.reject}`, { status: 'rejected' });
+      navigateTo('applications');
     });
   });
 };

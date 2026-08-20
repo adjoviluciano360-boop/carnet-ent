@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Carnet — Écoles disponibles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+<style>
+  .public-shell { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
+  .public-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:36px; }
+  .public-brand { font-family: var(--font-display); font-size: 1.8rem; font-weight:600; }
+  .school-card { display:flex; justify-content:space-between; align-items:center; }
+  .school-tracks { font-family: var(--font-mono); font-size:0.72rem; color: var(--ink-soft); margin-top:6px; }
+</style>
+</head>
+<body>
+
+<div class="public-shell">
+  <div class="public-header">
+    <div class="public-brand">Carnet</div>
+    <a href="index.html" class="btn-secondary" style="text-decoration:none;">Se connecter</a>
+  </div>
+
+  <h1 style="font-family:var(--font-display);font-size:2.2rem;margin-bottom:6px;">Écoles disponibles</h1>
+  <p style="color:var(--ink-soft);margin-bottom:32px;">
+    Parcourez les établissements présents sur Carnet. Les professeurs peuvent postuler pour rejoindre une école
+    (connexion requise) ; les élèves et parents sont ajoutés directement par leur administration.
+  </p>
+
+  <div id="schools-holder"><div class="empty-state">Chargement…</div></div>
+</div>
+
+<div class="modal-backdrop hidden" id="modal-backdrop">
+  <div class="modal" id="modal-body"></div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+function esc(s) {
+  return (s ?? '').toString().replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function openModal(html) {
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.add('hidden');
+}
+document.getElementById('modal-backdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'modal-backdrop') closeModal();
+});
+
+async function loadSchools() {
+  const holder = document.getElementById('schools-holder');
+  try {
+    const res = await fetch(`${API_BASE_URL}/schools/public`);
+    const schools = await res.json();
+    if (!res.ok) throw schools;
+
+    if (schools.length === 0) {
+      holder.innerHTML = '<div class="empty-state">Aucune école inscrite pour l\'instant.</div>';
+      return;
+    }
+
+    holder.innerHTML = schools.map((s) => `
+      <div class="card school-card" style="margin-bottom:14px;">
+        <div>
+          <div style="font-weight:700;font-size:1.05rem;">${esc(s.name)}</div>
+          <div style="color:var(--ink-soft);font-size:0.88rem;">${esc(s.city || '')}${s.city && s.country ? ', ' : ''}${esc(s.country || '')}</div>
+          ${s.tracks && s.tracks.length ? `<div class="school-tracks">Filières : ${s.tracks.map((t) => esc(t.name)).join(' · ')}</div>` : ''}
+        </div>
+        <button class="btn-primary" data-apply="${s.id}" data-name="${esc(s.name)}">Postuler comme professeur</button>
+      </div>
+    `).join('');
+
+    document.querySelectorAll('[data-apply]').forEach((btn) => {
+      btn.addEventListener('click', () => applyToSchool(btn.dataset.apply, btn.dataset.name));
+    });
+  } catch (err) {
+    holder.innerHTML = `<div class="empty-state">Impossible de charger les écoles pour le moment.</div>`;
+  }
+}
+
+async function applyToSchool(schoolId, schoolName) {
+  // Vérifie si l'utilisateur est connecté (via le token Supabase stocké localement par supabase-js)
+  const supabaseClient = window.supabase?.createClient
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+
+  if (!supabaseClient) {
+    window.location.href = 'index.html';
+    return;
+  }
+
+  const { data } = await supabaseClient.auth.getSession();
+  if (!data.session) {
+    openModal(`
+      <h3>Connexion requise</h3>
+      <p style="font-size:0.9rem;color:var(--ink-soft);">
+        Pour postuler chez <strong>${esc(schoolName)}</strong>, connectez-vous ou créez un compte professeur.
+      </p>
+      <div class="modal-actions">
+        <button class="link-btn" onclick="closeModal()">Annuler</button>
+        <a class="btn-primary" style="text-decoration:none;" href="index.html">Se connecter / S'inscrire</a>
+      </div>`);
+    return;
+  }
+
+  openModal(`
+    <h3>Postuler chez ${esc(schoolName)}</h3>
+    <label>Message (optionnel)<textarea id="apply-message" rows="4" placeholder="Présentez-vous brièvement, votre matière, votre expérience…"></textarea></label>
+    <div class="modal-actions">
+      <button class="link-btn" onclick="closeModal()">Annuler</button>
+      <button class="btn-primary" id="apply-send">Envoyer ma candidature</button>
+    </div>`);
+
+  document.getElementById('apply-send').addEventListener('click', async () => {
+    const token = data.session.access_token;
+    const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ message: document.getElementById('apply-message').value })
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      openModal(`<h3>Erreur</h3><p>${esc(result.error || 'Une erreur est survenue.')}</p>
+        <div class="modal-actions"><button class="btn-primary" onclick="closeModal()">Fermer</button></div>`);
+      return;
+    }
+    openModal(`<h3>Candidature envoyée !</h3><p style="font-size:0.9rem;">L'administration de ${esc(schoolName)} va examiner votre candidature.</p>
+      <div class="modal-actions"><button class="btn-primary" onclick="closeModal()">Fermer</button></div>`);
+  });
+}
+
+loadSchools();
+</script>
+</body>
+</html>

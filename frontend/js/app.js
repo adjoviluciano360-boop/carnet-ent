@@ -14,7 +14,8 @@ const NAV_BY_ROLE = {
     ['homework', 'Devoirs'],
     ['grades', 'Notes'],
     ['announcements', 'Annonces'],
-    ['members', 'Membres de l\u2019école']
+    ['members', 'Membres de l\u2019école'],
+    ['applications', 'Candidatures']
   ],
   prof: [
     ['dashboard', 'Tableau de bord'],
@@ -103,7 +104,8 @@ function navigateTo(view) {
     homework: Views.renderHomework,
     grades: Views.renderGrades,
     announcements: Views.renderAnnouncements,
-    members: Views.renderMembers
+    members: Views.renderMembers,
+    applications: Views.renderApplications
   };
   const fn = renderers[view];
   if (fn) fn(container).catch((err) => {
