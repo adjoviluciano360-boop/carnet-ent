@@ -34,13 +34,23 @@ router.get('/mine', requireAuth, async (req, res) => {
 });
 
 // Inviter un membre (élève / prof / parent / admin) dans une école
+// Pour un élève, le matricule est généré automatiquement par le système (jamais saisi à la main)
 router.post('/:schoolId/members', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
   const { user_id, role } = req.body;
   if (!user_id || !role) return res.status(400).json({ error: 'user_id et role requis' });
 
+  let student_number = null;
+  if (role === 'eleve') {
+    const { data: generated, error: genErr } = await supabaseAdmin.rpc('generate_matricule', {
+      p_school_id: req.schoolId
+    });
+    if (genErr) return res.status(400).json({ error: genErr.message });
+    student_number = generated;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('school_members')
-    .insert({ school_id: req.schoolId, user_id, role })
+    .insert({ school_id: req.schoolId, user_id, role, student_number })
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
@@ -51,12 +61,26 @@ router.post('/:schoolId/members', requireAuth, requireSchoolRole(['admin']), asy
 router.get('/:schoolId/members', requireAuth, requireSchoolRole(), async (req, res) => {
   let query = supabaseAdmin
     .from('school_members')
-    .select('id, role, profiles(id, full_name, phone, avatar_url)')
+    .select('id, role, student_number, profiles(id, full_name, phone, avatar_url)')
     .eq('school_id', req.schoolId);
   if (req.query.role) query = query.eq('role', req.query.role);
 
   const { data, error } = await query;
   if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// Rechercher un élève par matricule (utile pour l'assistant IA de saisie de notes)
+router.get('/:schoolId/students/by-number/:studentNumber', requireAuth, requireSchoolRole(['prof', 'admin']), async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('school_members')
+    .select('id, student_number, profiles(id, full_name)')
+    .eq('school_id', req.schoolId)
+    .eq('role', 'eleve')
+    .eq('student_number', req.params.studentNumber)
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Aucun élève avec ce matricule' });
   res.json(data);
 });
 
@@ -70,6 +94,19 @@ router.post('/:schoolId/parent-links', requireAuth, requireSchoolRole(['admin'])
     .single();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json(data);
+});
+
+// Régler les poids interro/devoir par défaut de l'école
+router.put('/:schoolId/weights', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { default_interro_weight, default_devoir_weight } = req.body;
+  const { data, error } = await supabaseAdmin
+    .from('schools')
+    .update({ default_interro_weight, default_devoir_weight })
+    .eq('id', req.schoolId)
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
 });
 
 export default router;

@@ -10,10 +10,14 @@ Stack : **Supabase** (auth + Postgres + RLS) · **Node.js/Express** (API) ·
 
 - Authentification (Supabase Auth) + rôles par école (admin, prof, élève, parent)
 - Un compte peut avoir plusieurs rôles dans plusieurs écoles (multi-tenant)
-- Classes, matières, affectation prof ↔ matière ↔ classe
+- **Filières** (ex: IMI) contenant plusieurs **salles/classes** (ex: Second IMI-1, Second IMI-2, Première IMI)
+- Matières, affectation prof ↔ matière ↔ classe (les profs de chaque salle sont donc toujours visibles)
+- **Matricule élève généré automatiquement** à l'ajout (format `ECO-2026-0001`)
 - Emploi du temps par classe (grille hebdomadaire)
 - Devoirs par matière/classe
-- Notes par élève/matière, avec calcul de moyenne pondérée par coefficient
+- **Notes typées** (interro / devoir) avec **coefficients personnalisables** par matière (ou par défaut au niveau école)
+- **Bulletin automatique** : moyenne interro, moyenne devoir et moyenne générale calculées en temps réel par matière ; si une info manque (ex: pas encore de note de devoir), le bulletin l'indique clairement en attendant, sans se tromper
+- **Assistant IA de saisie de notes** (chat en langage naturel) : décrivez une note à l'oral/à l'écrit, l'IA extrait les infos et enregistre — si une info manque, elle vous la redemande avant de continuer
 - Annonces (par classe ou toute l'école)
 - Portail parent : vue consolidée par enfant (classe, notes, devoirs, annonces)
 - Sécurité au niveau ligne (RLS) : chaque rôle ne voit que ce qui le concerne
@@ -21,14 +25,16 @@ Stack : **Supabase** (auth + Postgres + RLS) · **Node.js/Express** (API) ·
 ## 1. Mettre en place Supabase
 
 1. Créer un projet sur [supabase.com](https://supabase.com)
-2. Aller dans **SQL Editor**, coller le contenu de `supabase/schema.sql`, exécuter
+2. Aller dans **SQL Editor**, exécuter **dans l'ordre** :
+   1. `supabase/schema.sql`
+   2. `supabase/migration_002.sql` (filières, matricule, types de notes)
+   3. `supabase/migration_003.sql` (coefficients personnalisables, génération auto du matricule)
 3. Dans **Project Settings → API**, récupérer :
    - `Project URL` → `SUPABASE_URL`
    - `anon public key` → `SUPABASE_ANON_KEY` (frontend)
    - `service_role key` → `SUPABASE_SERVICE_ROLE_KEY` (backend uniquement, **jamais** exposée au frontend)
 4. Dans **Authentication → Providers**, activer Email/Password (activé par défaut)
-5. Recommandé : désactiver la confirmation d'e-mail obligatoire en développement
-   (**Authentication → Settings**) pour tester plus vite
+5. Dans **Authentication → URL Configuration**, renseigner votre URL Netlify en **Site URL** et **Redirect URLs** (sinon les liens de confirmation d'e-mail pointent vers localhost)
 
 ## 2. Déployer le backend (Render)
 
@@ -36,13 +42,18 @@ Stack : **Supabase** (auth + Postgres + RLS) · **Node.js/Express** (API) ·
 cd backend
 npm install
 cp .env.example .env
-# remplir SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FRONTEND_URL
+# remplir SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FRONTEND_URL, OPENROUTER_API_KEY
 npm start
 ```
 
 Sur Render : nouveau **Web Service**, connecter le dossier `backend/`,
 build command `npm install`, start command `npm start`, ajouter les
 variables d'environnement du `.env`.
+
+**Pour l'assistant IA de saisie de notes** : créer un compte gratuit sur
+[openrouter.ai](https://openrouter.ai), générer une clé API (**Keys** dans le menu),
+et la renseigner dans `OPENROUTER_API_KEY`. Le modèle par défaut
+(`meta-llama/llama-3.1-8b-instruct:free`) est gratuit.
 
 ## 3. Déployer le frontend (Netlify)
 

@@ -3,25 +3,52 @@ import { supabaseAdmin, requireAuth, requireSchoolRole } from '../middleware/aut
 
 const router = Router();
 
-// ---- CLASSES ----
+// ---- FILIÈRES ----
 
-router.post('/', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
-  const { name, level, school_year } = req.body;
+router.post('/tracks', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { name } = req.body;
   const { data, error } = await supabaseAdmin
-    .from('classes')
-    .insert({ school_id: req.schoolId, name, level, school_year })
+    .from('tracks')
+    .insert({ school_id: req.schoolId, name })
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json(data);
 });
 
-router.get('/', requireAuth, requireSchoolRole(), async (req, res) => {
+router.get('/tracks/all', requireAuth, requireSchoolRole(), async (req, res) => {
   const { data, error } = await supabaseAdmin
-    .from('classes')
+    .from('tracks')
     .select('*')
     .eq('school_id', req.schoolId)
     .order('name');
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// ---- CLASSES ----
+
+router.post('/', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { name, level, school_year, track_id } = req.body;
+  const { data, error } = await supabaseAdmin
+    .from('classes')
+    .insert({ school_id: req.schoolId, name, level, school_year, track_id: track_id || null })
+    .select()
+    .single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.status(201).json(data);
+});
+
+// Liste des classes, groupées par filière (optionnel ?track_id=xxx pour filtrer)
+router.get('/', requireAuth, requireSchoolRole(), async (req, res) => {
+  let query = supabaseAdmin
+    .from('classes')
+    .select('*, tracks(id, name)')
+    .eq('school_id', req.schoolId)
+    .order('name');
+  if (req.query.track_id) query = query.eq('track_id', req.query.track_id);
+
+  const { data, error } = await query;
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
 });
@@ -113,6 +140,19 @@ router.get('/subjects/all', requireAuth, requireSchoolRole(), async (req, res) =
     .select('*')
     .eq('school_id', req.schoolId)
     .order('name');
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+// Régler les poids interro/devoir spécifiques à une matière (NULL = hérite du réglage école)
+router.put('/subjects/:subjectId/weights', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { interro_weight, devoir_weight } = req.body;
+  const { data, error } = await supabaseAdmin
+    .from('subjects')
+    .update({ interro_weight, devoir_weight })
+    .eq('id', req.params.subjectId)
+    .select()
+    .single();
   if (error) return res.status(400).json({ error: error.message });
   res.json(data);
 });

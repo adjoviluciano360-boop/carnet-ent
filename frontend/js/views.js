@@ -136,39 +136,91 @@ function firstName() {
 }
 
 // ============================================================
-// CLASSES & MATIÈRES (admin)
+// FILIÈRES, CLASSES (SALLES) & MATIÈRES (admin)
 // ============================================================
 Views.renderClasses = async function (container) {
-  const [classes, subjects] = await Promise.all([Api.get('/classes'), Api.get('/classes/subjects/all')]);
+  const [tracks, subjects] = await Promise.all([Api.get('/classes/tracks/all'), Api.get('/classes/subjects/all')]);
 
   container.innerHTML = `
     <div class="main-header">
-      <h1 class="main-title">Classes & matières</h1>
+      <h1 class="main-title">Filières, classes & matières</h1>
       <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" id="add-track-btn">+ Filière</button>
         <button class="btn-secondary" id="add-subject-btn">+ Matière</button>
-        <button class="btn-primary" id="add-class-btn">+ Classe</button>
+        <button class="btn-primary" id="add-class-btn">+ Salle</button>
       </div>
     </div>
     <hr class="ruled" />
     <div class="grid grid-2">
       <div class="card">
-        <div class="card-title">Classes (${classes.length})</div>
-        ${classes.length === 0 ? '<div class="empty-state">Aucune classe. Créez-en une.</div>' :
-          classes.map((c) => `<div class="list-row"><span>${esc(c.name)}</span><span class="pill pill-sage">${esc(c.school_year)}</span></div>`).join('')}
+        <div class="card-title">Filières & salles</div>
+        <div id="tracks-holder"><div class="empty-state">Chargement…</div></div>
       </div>
       <div class="card">
         <div class="card-title">Matières (${subjects.length})</div>
         ${subjects.length === 0 ? '<div class="empty-state">Aucune matière. Créez-en une.</div>' :
-          subjects.map((s) => `<div class="list-row"><span>${esc(s.name)}</span></div>`).join('')}
+          subjects.map((s) => `
+            <div class="list-row">
+              <span>${esc(s.name)}</span>
+              <button class="link-btn" data-subject-weights="${s.id}" data-subject-name="${esc(s.name)}"
+                data-iw="${s.interro_weight ?? ''}" data-dw="${s.devoir_weight ?? ''}">Coefficients</button>
+            </div>`).join('')}
       </div>
     </div>
   `;
 
+  await Views._loadTracks();
+
+  document.querySelectorAll('[data-subject-weights]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openModal(`
+        <h3>Coefficients — ${esc(btn.dataset.subjectName)}</h3>
+        <p style="font-size:0.82rem;color:var(--ink-soft);">Laisser vide pour utiliser le réglage par défaut de l'école.</p>
+        <label>Poids interro<input id="m-iw" type="number" step="0.5" value="${btn.dataset.iw}" placeholder="Ex : 1" /></label>
+        <label>Poids devoir<input id="m-dw" type="number" step="0.5" value="${btn.dataset.dw}" placeholder="Ex : 2" /></label>
+        <div class="modal-actions">
+          <button class="link-btn" id="m-cancel">Annuler</button>
+          <button class="btn-primary" id="m-save">Enregistrer</button>
+        </div>`);
+      document.getElementById('m-cancel').addEventListener('click', closeModal);
+      document.getElementById('m-save').addEventListener('click', async () => {
+        const iw = document.getElementById('m-iw').value;
+        const dw = document.getElementById('m-dw').value;
+        await Api.put(`/classes/subjects/${btn.dataset.subjectWeights}/weights`, {
+          interro_weight: iw === '' ? null : Number(iw),
+          devoir_weight: dw === '' ? null : Number(dw)
+        });
+        closeModal();
+        navigateTo('classes');
+      });
+    });
+  });
+
+  document.getElementById('add-track-btn').addEventListener('click', () => {
+    openModal(`
+      <h3>Nouvelle filière</h3>
+      <label>Nom<input id="m-name" placeholder="Ex : IMI" /></label>
+      <div class="modal-actions">
+        <button class="link-btn" id="m-cancel">Annuler</button>
+        <button class="btn-primary" id="m-save">Créer</button>
+      </div>`);
+    document.getElementById('m-cancel').addEventListener('click', closeModal);
+    document.getElementById('m-save').addEventListener('click', async () => {
+      await Api.post('/classes/tracks', { name: document.getElementById('m-name').value });
+      closeModal();
+      navigateTo('classes');
+    });
+  });
+
   document.getElementById('add-class-btn').addEventListener('click', () => {
     openModal(`
-      <h3>Nouvelle classe</h3>
-      <label>Nom<input id="m-name" placeholder="Ex : 6\u00e8me A" /></label>
-      <label>Niveau<input id="m-level" placeholder="Ex : 6\u00e8me" /></label>
+      <h3>Nouvelle salle</h3>
+      <label>Filière<select id="m-track">
+        <option value="">— Aucune —</option>
+        ${tracks.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}
+      </select></label>
+      <label>Nom<input id="m-name" placeholder="Ex : Second IMI-1" /></label>
+      <label>Niveau<input id="m-level" placeholder="Ex : Seconde" /></label>
       <label>Année scolaire<input id="m-year" placeholder="Ex : 2026-2027" value="2026-2027" /></label>
       <div class="modal-actions">
         <button class="link-btn" id="m-cancel">Annuler</button>
@@ -179,7 +231,8 @@ Views.renderClasses = async function (container) {
       await Api.post('/classes', {
         name: document.getElementById('m-name').value,
         level: document.getElementById('m-level').value,
-        school_year: document.getElementById('m-year').value
+        school_year: document.getElementById('m-year').value,
+        track_id: document.getElementById('m-track').value || null
       });
       closeModal();
       navigateTo('classes');
@@ -201,6 +254,42 @@ Views.renderClasses = async function (container) {
       navigateTo('classes');
     });
   });
+};
+
+Views._loadTracks = async function () {
+  const holder = document.getElementById('tracks-holder');
+  const classes = await Api.get('/classes');
+  const tracks = await Api.get('/classes/tracks/all');
+
+  const byTrack = {};
+  const noTrack = [];
+  classes.forEach((c) => {
+    if (c.track_id) {
+      (byTrack[c.track_id] ??= []).push(c);
+    } else noTrack.push(c);
+  });
+
+  if (tracks.length === 0 && classes.length === 0) {
+    holder.innerHTML = '<div class="empty-state">Aucune filière ni salle. Commencez par créer une filière.</div>';
+    return;
+  }
+
+  holder.innerHTML = `
+    ${tracks.map((t) => `
+      <div style="margin-bottom:14px;">
+        <div class="card-eyebrow">${esc(t.name)}</div>
+        ${(byTrack[t.id] || []).length === 0 ? '<div class="empty-state" style="padding:10px 0;">Aucune salle.</div>' :
+          (byTrack[t.id] || []).map((c) => `
+            <div class="list-row"><span>${esc(c.name)}</span><span class="pill pill-sage">${esc(c.level || '')}</span></div>
+          `).join('')}
+      </div>
+    `).join('')}
+    ${noTrack.length > 0 ? `
+      <div>
+        <div class="card-eyebrow">Sans filière</div>
+        ${noTrack.map((c) => `<div class="list-row"><span>${esc(c.name)}</span></div>`).join('')}
+      </div>` : ''}
+  `;
 };
 
 // ============================================================
@@ -382,28 +471,12 @@ Views._renderHwList = function (hw, isStudentView) {
 // ============================================================
 Views.renderGrades = async function (container) {
   if (State.role === 'eleve') {
-    const [grades, averages] = await Promise.all([
-      Api.get(`/grades/student/${State.user.id}`),
-      Api.get(`/grades/student/${State.user.id}/average`)
-    ]);
-    container.innerHTML = `
-      <div class="main-header"><h1 class="main-title">Mes notes</h1></div>
-      <hr class="ruled" />
-      <div class="grid grid-2">
-        <div class="card">
-          <div class="card-title">Moyennes par matière</div>
-          ${averages.map((a) => `<div class="list-row"><span>${esc(a.subject_name)}</span><span class="score-big" style="font-size:1rem;">${a.average ?? '—'}/20</span></div>`).join('') || '<div class="empty-state">Aucune donnée.</div>'}
-        </div>
-        <div class="card">
-          <div class="card-title">Détail des notes</div>
-          ${grades.map((g) => `<div class="list-row"><span>${esc(g.label)} — ${esc(g.subjects.name)}</span><span>${g.score}/${g.max_score}</span></div>`).join('') || '<div class="empty-state">Aucune note.</div>'}
-        </div>
-      </div>
-    `;
+    const bulletin = await Api.get(`/grades/student/${State.user.id}/bulletin`);
+    Views._renderBulletin(container, bulletin, 'Mon bulletin');
     return;
   }
 
-  // prof / admin : saisie de notes
+  // prof / admin : saisie de notes + assistant IA + consultation bulletin par élève
   let classes = [];
   if (State.role === 'prof') classes = await Api.get('/classes/my/prof');
   else classes = (await Api.get('/classes')).map((c) => ({ classes: c, subjects: null }));
@@ -411,11 +484,38 @@ Views.renderGrades = async function (container) {
   container.innerHTML = `
     <div class="main-header">
       <h1 class="main-title">Notes</h1>
-      <button class="btn-primary" id="add-grade-btn">+ Saisir une note</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" id="ai-grade-btn">💬 Assistant IA</button>
+        <button class="btn-primary" id="add-grade-btn">+ Saisir une note</button>
+      </div>
     </div>
     <hr class="ruled" />
-    <div class="empty-state">Sélectionnez "Saisir une note" pour noter une classe / matière.</div>
+    <div class="card">
+      <div class="card-title">Voir le bulletin d'un élève</div>
+      <label>Classe<select id="bulletin-class">${(State.role === 'admin' ? await Api.get('/classes') : classes.map((c) => c.classes)).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
+      <div id="bulletin-students-holder" style="margin-top:10px;"></div>
+    </div>
+    <div id="bulletin-view-holder" style="margin-top:24px;"></div>
   `;
+
+  const loadBulletinStudents = async (classId) => {
+    const students = await Api.get(`/classes/${classId}/students`);
+    document.getElementById('bulletin-students-holder').innerHTML = students.map((s) => `
+      <span class="pill pill-sage" style="cursor:pointer;margin:2px;display:inline-block;" data-view-bulletin="${s.profiles.id}">${esc(s.profiles.full_name)}</span>
+    `).join('') || '<div class="empty-state">Aucun élève dans cette classe.</div>';
+
+    document.querySelectorAll('[data-view-bulletin]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const bulletin = await Api.get(`/grades/student/${el.dataset.viewBulletin}/bulletin`);
+        Views._renderBulletin(document.getElementById('bulletin-view-holder'), bulletin, `Bulletin — ${el.textContent}`);
+      });
+    });
+  };
+  const classSelect = document.getElementById('bulletin-class');
+  if (classSelect.value) await loadBulletinStudents(classSelect.value);
+  classSelect.addEventListener('change', (e) => loadBulletinStudents(e.target.value));
+
+  document.getElementById('ai-grade-btn').addEventListener('click', () => Views._openAiGradeAssistant());
 
   document.getElementById('add-grade-btn').addEventListener('click', async () => {
     const subjects = await Api.get('/classes/subjects/all');
@@ -425,6 +525,10 @@ Views.renderGrades = async function (container) {
       <h3>Nouvelle note</h3>
       <label>Classe<select id="m-class">${allClasses.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
       <label>Matière<select id="m-subject">${subjects.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label>
+      <label>Type<select id="m-type">
+        <option value="devoir">Devoir</option>
+        <option value="interro">Interrogation</option>
+      </select></label>
       <label>Intitulé<input id="m-label" placeholder="Ex : Devoir 1" /></label>
       <div id="m-students-holder"><div class="empty-state">Sélectionnez une classe…</div></div>
       <label>Note sur<input id="m-max" type="number" value="20" /></label>
@@ -450,6 +554,7 @@ Views.renderGrades = async function (container) {
     document.getElementById('m-save').addEventListener('click', async () => {
       const class_id = document.getElementById('m-class').value;
       const subject_id = document.getElementById('m-subject').value;
+      const type = document.getElementById('m-type').value;
       const label = document.getElementById('m-label').value;
       const max_score = Number(document.getElementById('m-max').value);
       const coefficient = Number(document.getElementById('m-coef').value);
@@ -460,12 +565,93 @@ Views.renderGrades = async function (container) {
       if (entries.length === 0) { alert('Saisissez au moins une note.'); return; }
 
       await Api.post('/grades/bulk', {
-        class_id, subject_id, label, max_score, coefficient,
+        class_id, subject_id, type, label, max_score, coefficient,
         graded_at: new Date().toISOString().split('T')[0],
         entries
       });
       closeModal();
     });
+  });
+};
+
+// Rendu d'un bulletin (élève, parent, ou vue prof/admin) — moyennes interro/devoir/générale par matière
+Views._renderBulletin = function (container, bulletin, title) {
+  container.innerHTML = `
+    <div class="main-header"><h1 class="main-title">${esc(title)}</h1></div>
+    <hr class="ruled" />
+    ${bulletin.en_attente && bulletin.en_attente.length > 0 ? `
+      <div class="card" style="margin-bottom:20px;border-left:3px solid var(--amber);">
+        <div class="card-eyebrow">En attente de plus d'informations</div>
+        ${bulletin.en_attente.map((e) => `<div style="font-size:0.88rem;">${esc(e.subject_name)} : il manque des ${esc(e.manque)} pour finaliser la moyenne.</div>`).join('')}
+      </div>` : ''}
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-title">Moyenne générale</div>
+      <div class="score-big">${bulletin.moyenne_generale_bulletin ?? '—'} / 20</div>
+    </div>
+    <table class="data-table">
+      <thead><tr><th>Matière</th><th>Moy. interro</th><th>Moy. devoir</th><th>Moy. générale</th></tr></thead>
+      <tbody>
+        ${bulletin.subjects.length === 0 ? `<tr><td colspan="4" class="empty-state">Aucune note pour l'instant.</td></tr>` :
+          bulletin.subjects.map((s) => `
+            <tr>
+              <td>${esc(s.subject_name)}</td>
+              <td>${s.moyenne_interro ?? '—'}</td>
+              <td>${s.moyenne_devoir ?? '—'}</td>
+              <td><strong>${s.moyenne_generale ?? '—'}</strong></td>
+            </tr>`).join('')}
+      </tbody>
+    </table>
+  `;
+};
+
+// Assistant IA de saisie de notes en langage naturel (chat)
+Views._openAiGradeAssistant = function () {
+  openModal(`
+    <h3>Assistant IA — saisie de notes</h3>
+    <p style="font-size:0.82rem;color:var(--ink-soft);">
+      Décrivez une ou plusieurs notes en langage naturel. Si une information manque
+      (élève, classe, matière, type, note), l'assistant vous la demandera avant de continuer.
+    </p>
+    <div id="ai-chat-log" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+    <label>Message<textarea id="ai-chat-input" rows="2" placeholder="Ex : Kofi a eu 15/20 en interro de maths en Second IMI-1"></textarea></label>
+    <div class="modal-actions">
+      <button class="link-btn" id="m-cancel">Fermer</button>
+      <button class="btn-primary" id="ai-chat-send">Envoyer</button>
+    </div>`);
+  document.getElementById('m-cancel').addEventListener('click', closeModal);
+
+  const history = [];
+  const log = document.getElementById('ai-chat-log');
+  const appendBubble = (role, text) => {
+    const bubble = document.createElement('div');
+    bubble.style.cssText = `align-self:${role === 'user' ? 'flex-end' : 'flex-start'};background:${role === 'user' ? 'var(--ink)' : '#F4F1EA'};color:${role === 'user' ? 'var(--paper)' : 'var(--ink)'};padding:8px 12px;border-radius:10px;font-size:0.85rem;max-width:85%;white-space:pre-wrap;`;
+    bubble.textContent = text;
+    log.appendChild(bubble);
+    log.scrollTop = log.scrollHeight;
+  };
+
+  const send = async () => {
+    const input = document.getElementById('ai-chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+    appendBubble('user', text);
+    history.push({ role: 'user', content: text });
+    input.value = '';
+    appendBubble('assistant', '…');
+
+    try {
+      const res = await Api.post('/ai/grade-entry', { messages: history });
+      log.lastChild.remove();
+      appendBubble('assistant', res.reply);
+      history.push({ role: 'assistant', content: res.reply });
+    } catch (err) {
+      log.lastChild.remove();
+      appendBubble('assistant', "Erreur : " + (err.error || 'impossible de contacter l\'assistant.'));
+    }
+  };
+  document.getElementById('ai-chat-send').addEventListener('click', send);
+  document.getElementById('ai-chat-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
 };
 
@@ -552,12 +738,17 @@ Views.renderMembers = async function (container) {
         <div class="card">
           <div class="card-title">${roleLabel(role)}s (${list.length})</div>
           ${list.length === 0 ? '<div class="empty-state">Aucun.</div>' :
-            list.map((m) => `<div class="list-row"><span>${esc(m.profiles.full_name)}</span></div>`).join('')}
+            list.map((m) => `
+              <div class="list-row">
+                <span>${esc(m.profiles.full_name)}</span>
+                ${m.student_number ? `<span class="pill pill-amber">${esc(m.student_number)}</span>` : ''}
+              </div>`).join('')}
         </div>
       `).join('')}
     </div>
     <p style="font-size:0.82rem;color:var(--ink-soft);margin-top:20px;">
       Pour ajouter un membre, la personne doit d'abord créer un compte (page de connexion), puis vous renseignez son identifiant utilisateur ici.
+      Pour un élève, le matricule est généré automatiquement.
     </p>
   `;
 
@@ -571,6 +762,7 @@ Views.renderMembers = async function (container) {
         <option value="parent">Parent</option>
         <option value="admin">Administrateur</option>
       </select></label>
+      <p style="font-size:0.8rem;color:var(--ink-soft);">Pour un élève, le matricule sera généré automatiquement à l'ajout.</p>
       <div class="modal-actions">
         <button class="link-btn" id="m-cancel">Annuler</button>
         <button class="btn-primary" id="m-save">Ajouter</button>

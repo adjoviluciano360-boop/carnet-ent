@@ -9,6 +9,7 @@ import homeworkRoutes from './routes/homework.js';
 import gradesRoutes from './routes/grades.js';
 import announcementsRoutes from './routes/announcements.js';
 import parentRoutes from './routes/parent.js';
+import aiRoutes from './routes/ai.js';
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use('/api/homework', homeworkRoutes);
 app.use('/api/grades', gradesRoutes);
 app.use('/api/announcements', announcementsRoutes);
 app.use('/api/parent', parentRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Handler d'erreur générique
 app.use((err, req, res, next) => {

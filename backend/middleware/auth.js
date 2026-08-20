@@ -3,22 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Vérification au démarrage : si l'une de ces variables est absente, vide,
-// ou contient des guillemets/espaces résiduels, TOUTES les requêtes
-// échoueront avec un 401 générique sans qu'on sache pourquoi.
-if (!supabaseUrl || !serviceKey) {
-  console.error(
-    '[auth.js] Variable manquante au démarrage — SUPABASE_URL:',
-    supabaseUrl ? 'présente' : 'MANQUANTE',
-    '| SUPABASE_SERVICE_ROLE_KEY:',
-    serviceKey ? 'présente' : 'MANQUANTE'
-  );
-} else if (serviceKey.startsWith('"') || serviceKey.endsWith('"') || /\s/.test(serviceKey)) {
-  console.error(
-    '[auth.js] SUPABASE_SERVICE_ROLE_KEY semble contenir des guillemets ou espaces parasites — vérifier la valeur sur Render.'
-  );
-}
-
 // Client "admin" utilisé côté serveur (bypass RLS quand nécessaire,
 // mais on vérifie les droits nous-mêmes dans le code)
 export const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
@@ -37,11 +21,6 @@ export async function requireAuth(req, res, next) {
 
     const { data, error } = await supabaseAdmin.auth.getUser(token);
     if (error || !data?.user) {
-      // On logge la vraie raison côté serveur (jamais renvoyée au client,
-      // pour ne pas divulguer de détails d'implémentation) — sans ça,
-      // impossible de savoir si c'est une clé invalide, un token expiré,
-      // un projet différent, etc.
-      console.error('[requireAuth] Échec de validation du token :', error?.message || error);
       return res.status(401).json({ error: 'Session invalide ou expirée' });
     }
     req.user = data.user;
