@@ -274,22 +274,107 @@ Views._loadTracks = async function () {
     return;
   }
 
+  const classRow = (c) => `
+    <div class="list-row">
+      <span>${esc(c.name)}</span>
+      <span style="display:flex;gap:8px;align-items:center;">
+        <span class="pill pill-sage">${esc(c.level || '')}</span>
+        <button class="link-btn" data-scan-class="${c.id}" data-scan-name="${esc(c.name)}">📷 Fiche</button>
+      </span>
+    </div>`;
+
   holder.innerHTML = `
     ${tracks.map((t) => `
       <div style="margin-bottom:14px;">
         <div class="card-eyebrow">${esc(t.name)}</div>
         ${(byTrack[t.id] || []).length === 0 ? '<div class="empty-state" style="padding:10px 0;">Aucune salle.</div>' :
-          (byTrack[t.id] || []).map((c) => `
-            <div class="list-row"><span>${esc(c.name)}</span><span class="pill pill-sage">${esc(c.level || '')}</span></div>
-          `).join('')}
+          (byTrack[t.id] || []).map(classRow).join('')}
       </div>
     `).join('')}
     ${noTrack.length > 0 ? `
       <div>
         <div class="card-eyebrow">Sans filière</div>
-        ${noTrack.map((c) => `<div class="list-row"><span>${esc(c.name)}</span></div>`).join('')}
+        ${noTrack.map(classRow).join('')}
       </div>` : ''}
   `;
+
+  document.querySelectorAll('[data-scan-class]').forEach((btn) => {
+    btn.addEventListener('click', () => Views._openRosterScan(btn.dataset.scanClass, btn.dataset.scanName));
+  });
+};
+
+// Scan d'une fiche de classe manuscrite/tapée : photo -> extraction IA -> révision -> import
+Views._openRosterScan = function (classId, className) {
+  openModal(`
+    <h3>Fiche élèves — ${esc(className)}</h3>
+    <p style="font-size:0.82rem;color:var(--ink-soft);">
+      Prenez en photo (ou importez) la liste des élèves de cette salle. L'IA va lire les noms ;
+      vous pourrez les corriger avant l'import définitif. Un matricule sera généré pour chacun.
+    </p>
+    <label>Photo de la fiche<input type="file" id="roster-file" accept="image/*" capture="environment" /></label>
+    <div id="roster-preview" style="margin:10px 0;"></div>
+    <div class="modal-actions">
+      <button class="link-btn" id="m-cancel">Annuler</button>
+      <button class="btn-primary" id="roster-scan-btn">Analyser la photo</button>
+    </div>
+    <div id="roster-review-holder" style="margin-top:16px;"></div>`);
+  document.getElementById('m-cancel').addEventListener('click', closeModal);
+
+  let base64Image = null;
+  document.getElementById('roster-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      base64Image = reader.result;
+      document.getElementById('roster-preview').innerHTML =
+        `<img src="${base64Image}" style="max-width:100%;max-height:200px;border-radius:10px;" />`;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('roster-scan-btn').addEventListener('click', async () => {
+    if (!base64Image) { alert('Choisissez ou prenez une photo d\'abord.'); return; }
+    const reviewHolder = document.getElementById('roster-review-holder');
+    reviewHolder.innerHTML = '<div class="empty-state">Analyse de la photo par l\'IA…</div>';
+    try {
+      const res = await Api.post('/ai/roster-scan', { image_base64: base64Image });
+      reviewHolder.innerHTML = `
+        <label>Noms détectés — corrigez si besoin, un nom par ligne
+          <textarea id="roster-names" rows="8">${esc(res.names.join('\n'))}</textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="btn-primary" id="roster-import-btn">Importer ces élèves</button>
+        </div>`;
+      document.getElementById('roster-import-btn').addEventListener('click', async () => {
+        const names = document.getElementById('roster-names').value
+          .split('\n').map((n) => n.trim()).filter(Boolean);
+        if (names.length === 0) { alert('Aucun nom à importer.'); return; }
+        const created = await Api.post(`/classes/${classId}/roster/import`, { names });
+        Views._renderRosterResult(reviewHolder, created, className);
+      });
+    } catch (err) {
+      reviewHolder.innerHTML = `<div class="empty-state">Erreur : ${esc(err.error || 'analyse impossible.')}</div>`;
+    }
+  });
+};
+
+Views._renderRosterResult = function (holder, created, className) {
+  holder.innerHTML = `
+    <div class="card-eyebrow">Import terminé — ${created.length} élève(s)</div>
+    <p style="font-size:0.85rem;color:var(--ink-soft);">
+      Distribuez ces matricules aux élèves : ils créeront leur compte, puis les activeront depuis
+      "J'ai un matricule" sur la page de connexion, pour ${esc(className)}.
+    </p>
+    <table class="data-table">
+      <thead><tr><th>Nom</th><th>Matricule</th></tr></thead>
+      <tbody>
+        ${created.map((c) => `<tr><td>${esc(c.full_name)}</td><td><strong>${esc(c.matricule)}</strong></td></tr>`).join('')}
+      </tbody>
+    </table>
+    <div class="modal-actions">
+      <button class="btn-primary" onclick="closeModal(); navigateTo('classes');">Terminer</button>
+    </div>`;
 };
 
 // ============================================================

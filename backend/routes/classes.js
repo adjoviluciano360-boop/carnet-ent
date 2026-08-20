@@ -157,4 +157,50 @@ router.put('/subjects/:subjectId/weights', requireAuth, requireSchoolRole(['admi
   res.json(data);
 });
 
+// ---- FICHE ÉLÈVES (roster) — import depuis une liste scannée par l'IA ----
+
+// Importe une liste de noms validée (après scan IA) : génère un matricule pour chacun
+router.post('/:classId/roster/import', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { names } = req.body;
+  if (!Array.isArray(names) || names.length === 0) return res.status(400).json({ error: 'names requis (tableau non vide)' });
+
+  const created = [];
+  for (const full_name of names) {
+    const cleaned = full_name.trim();
+    if (!cleaned) continue;
+
+    const { data: matricule, error: genErr } = await supabaseAdmin.rpc('generate_matricule', {
+      p_school_id: req.schoolId
+    });
+    if (genErr) return res.status(400).json({ error: genErr.message });
+
+    const { data, error } = await supabaseAdmin
+      .from('roster_students')
+      .insert({ school_id: req.schoolId, class_id: req.params.classId, full_name: cleaned, matricule })
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+    created.push(data);
+  }
+
+  res.status(201).json(created);
+});
+
+// Liste la fiche d'une classe (élèves scannés, activés ou non)
+router.get('/:classId/roster', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from('roster_students')
+    .select('*')
+    .eq('class_id', req.params.classId)
+    .order('full_name');
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+
+router.delete('/roster/:rosterId', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { error } = await supabaseAdmin.from('roster_students').delete().eq('id', req.params.rosterId);
+  if (error) return res.status(400).json({ error: error.message });
+  res.status(204).send();
+});
+
 export default router;

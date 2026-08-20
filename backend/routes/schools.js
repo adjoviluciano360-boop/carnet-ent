@@ -14,6 +14,41 @@ router.get('/public', async (req, res) => {
   res.json(data);
 });
 
+// Activation d'un compte élève via son matricule (donné sur la fiche imprimée après scan IA).
+// L'utilisateur doit être connecté ; il devient membre 'eleve' de l'école et est inscrit dans sa classe.
+router.post('/:schoolId/claim-matricule', requireAuth, async (req, res) => {
+  const { matricule } = req.body;
+  if (!matricule) return res.status(400).json({ error: 'matricule requis' });
+
+  const { data: roster, error: rosterErr } = await supabaseAdmin
+    .from('roster_students')
+    .select('*')
+    .eq('school_id', req.schoolId)
+    .eq('matricule', matricule.trim())
+    .maybeSingle();
+  if (rosterErr) return res.status(400).json({ error: rosterErr.message });
+  if (!roster) return res.status(404).json({ error: 'Matricule introuvable pour cette école.' });
+  if (roster.claimed_by) return res.status(400).json({ error: 'Ce matricule a déjà été activé par un autre compte.' });
+
+  const { error: claimErr } = await supabaseAdmin
+    .from('roster_students')
+    .update({ claimed_by: req.user.id })
+    .eq('id', roster.id);
+  if (claimErr) return res.status(400).json({ error: claimErr.message });
+
+  const { error: memberErr } = await supabaseAdmin
+    .from('school_members')
+    .insert({ school_id: req.schoolId, user_id: req.user.id, role: 'eleve', student_number: matricule.trim() });
+  if (memberErr && memberErr.code !== '23505') return res.status(400).json({ error: memberErr.message });
+
+  const { error: classErr } = await supabaseAdmin
+    .from('class_students')
+    .insert({ class_id: roster.class_id, student_id: req.user.id });
+  if (classErr && classErr.code !== '23505') return res.status(400).json({ error: classErr.message });
+
+  res.json({ ok: true, class_id: roster.class_id, full_name: roster.full_name });
+});
+
 // Créer une école (le créateur devient admin automatiquement)
 router.post('/', requireAuth, async (req, res) => {
   const { name, slug, city, country } = req.body;

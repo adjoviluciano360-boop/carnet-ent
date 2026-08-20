@@ -4,6 +4,7 @@ import { supabaseAdmin, requireAuth, requireSchoolRole } from '../middleware/aut
 const router = Router();
 
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
+const OPENROUTER_VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'google/gemini-2.0-flash-exp:free';
 
 const SYSTEM_PROMPT = `Tu es l'assistant de saisie de notes de "Carnet", un ENT scolaire béninois.
 Un professeur va te décrire une ou plusieurs notes en langage naturel (français).
@@ -170,6 +171,69 @@ router.post('/grade-entry', requireAuth, requireSchoolRole(['prof', 'admin']), a
     res.json({ reply: reply.trim(), saved, failed });
   } catch (err) {
     console.error('AI grade-entry error:', err);
+    res.status(500).json({ error: err.message || 'Erreur assistant IA' });
+  }
+});
+
+const ROSTER_SYSTEM_PROMPT = `Tu extrais une liste de noms d'élèves à partir d'une photo de fiche de classe
+(manuscrite ou tapée). Renvoie UNIQUEMENT un tableau JSON de chaînes de caractères,
+un nom complet par élève, dans l'ordre où ils apparaissent sur la fiche.
+Corrige les fautes d'écriture évidentes mais n'invente jamais de nom.
+Ignore les numéros de ligne, en-têtes, ou toute autre information qui n'est pas un nom d'élève.
+Format de réponse EXACT, sans aucun texte autour : ["Nom Prénom", "Nom Prénom", ...]`;
+
+async function callOpenRouterVision(imageBase64) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY manquant côté serveur');
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_VISION_MODEL,
+      messages: [
+        { role: 'system', content: ROSTER_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Voici la photo de la fiche de classe. Extrais la liste des noms.' },
+            { type: 'image_url', image_url: { url: imageBase64 } }
+          ]
+        }
+      ]
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenRouter error ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+// Scanne une photo de fiche de classe et renvoie les noms détectés (à valider côté client avant import)
+router.post('/roster-scan', requireAuth, requireSchoolRole(['admin', 'prof']), async (req, res) => {
+  try {
+    const { image_base64 } = req.body;
+    if (!image_base64) return res.status(400).json({ error: 'image_base64 requis' });
+
+    const raw = await callOpenRouterVision(image_base64);
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return res.status(422).json({ error: "L'IA n'a pas pu extraire de liste. Réessayez avec une photo plus nette." });
+
+    let names;
+    try {
+      names = JSON.parse(match[0]).filter((n) => typeof n === 'string' && n.trim().length > 0);
+    } catch {
+      return res.status(422).json({ error: "Erreur de lecture de la réponse de l'IA. Réessayez." });
+    }
+
+    res.json({ names });
+  } catch (err) {
+    console.error('AI roster-scan error:', err);
     res.status(500).json({ error: err.message || 'Erreur assistant IA' });
   }
 });

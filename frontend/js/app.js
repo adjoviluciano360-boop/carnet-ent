@@ -118,9 +118,44 @@ function renderNoSchool() {
   document.getElementById('main-content').innerHTML = `
     <div class="empty-state">
       <p>Vous n'êtes rattaché à aucune école pour le moment.</p>
-      <p>Demandez à l'administrateur de votre établissement de vous ajouter, ou créez votre propre école ci-dessous.</p>
-      <button class="btn-primary" id="create-school-btn" style="margin-top:16px;">Créer une école</button>
+      <p>Si votre établissement vous a donné un matricule, activez-le ci-dessous. Sinon,
+      demandez à votre administrateur de vous ajouter, ou créez votre propre école.</p>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+        <button class="btn-primary" id="claim-matricule-btn">J'ai un matricule</button>
+        <button class="btn-secondary" id="create-school-btn">Créer une école</button>
+      </div>
     </div>`;
+
+  document.getElementById('claim-matricule-btn').addEventListener('click', async () => {
+    const schools = await Api.get('/schools/public');
+    openModal(`
+      <h3>Activer mon matricule</h3>
+      <label>École<select id="claim-school">
+        ${schools.map((s) => `<option value="${s.id}">${esc(s.name)}${s.city ? ' — ' + esc(s.city) : ''}</option>`).join('')}
+      </select></label>
+      <label>Matricule<input id="claim-matricule" placeholder="Ex : CAR-2026-0001" /></label>
+      <p class="form-error" id="claim-error"></p>
+      <div class="modal-actions">
+        <button class="link-btn" id="m-cancel">Annuler</button>
+        <button class="btn-primary" id="claim-save">Activer</button>
+      </div>`);
+    document.getElementById('m-cancel').addEventListener('click', closeModal);
+    document.getElementById('claim-save').addEventListener('click', async () => {
+      const schoolId = document.getElementById('claim-school').value;
+      const matricule = document.getElementById('claim-matricule').value.trim();
+      const errorEl = document.getElementById('claim-error');
+      if (!matricule) { errorEl.textContent = 'Merci de saisir votre matricule.'; return; }
+      try {
+        Api.currentSchoolId = schoolId;
+        await Api.post(`/schools/${schoolId}/claim-matricule`, { matricule });
+        closeModal();
+        boot();
+      } catch (err) {
+        errorEl.textContent = err.error || 'Matricule invalide.';
+      }
+    });
+  });
+
   document.getElementById('create-school-btn').addEventListener('click', async () => {
     const name = prompt('Nom de l\u2019école :');
     if (!name) return;
@@ -129,6 +164,7 @@ function renderNoSchool() {
     boot();
   });
 }
+
 
 document.getElementById('logout-btn').addEventListener('click', async () => {
   await supabaseClient.auth.signOut();
