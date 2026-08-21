@@ -5,6 +5,10 @@ const router = Router();
 
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
 const OPENROUTER_VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'google/gemma-4-31b-it:free';
+// Modèles de secours, essayés dans l'ordre si le modèle principal est saturé (429) ou indisponible.
+// Les modèles gratuits d'OpenRouter changent souvent : cette liste peut nécessiter une mise à jour occasionnelle.
+const VISION_FALLBACK_MODELS = (process.env.OPENROUTER_VISION_FALLBACKS || 'google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free')
+  .split(',').map((m) => m.trim()).filter(Boolean);
 
 const SYSTEM_PROMPT = `Tu es l'assistant de saisie de notes de "Carnet", un ENT scolaire béninois.
 Un professeur va te décrire une ou plusieurs notes en langage naturel (français).
@@ -190,10 +194,7 @@ N'invente jamais de matière qui n'apparaît pas sur la photo.
 Format de réponse EXACT, sans aucun texte autour :
 [{"name":"Mathématiques","coefficient":4},{"name":"Français","coefficient":3}]`;
 
-async function callOpenRouterVision(imageBase64, systemPrompt, userText) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error('OPENROUTER_API_KEY manquant côté serveur');
-
+async function callVisionModel(apiKey, model, systemPrompt, userText, imageBase64) {
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -201,7 +202,7 @@ async function callOpenRouterVision(imageBase64, systemPrompt, userText) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: OPENROUTER_VISION_MODEL,
+      model,
       messages: [
         { role: 'system', content: systemPrompt },
         {
@@ -216,10 +217,31 @@ async function callOpenRouterVision(imageBase64, systemPrompt, userText) {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`OpenRouter error ${res.status}: ${text}`);
+    const err = new Error(`OpenRouter error ${res.status}: ${text}`);
+    err.status = res.status;
+    throw err;
   }
   const data = await res.json();
   return data.choices?.[0]?.message?.content || '';
+}
+
+// Essaie le modèle principal, puis les modèles de secours en cascade si saturé (429) ou en erreur.
+async function callOpenRouterVision(imageBase64, systemPrompt, userText) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY manquant côté serveur');
+
+  const modelsToTry = [OPENROUTER_VISION_MODEL, ...VISION_FALLBACK_MODELS];
+  let lastError;
+
+  for (const model of modelsToTry) {
+    try {
+      return await callVisionModel(apiKey, model, systemPrompt, userText, imageBase64);
+    } catch (err) {
+      console.warn(`Modèle vision "${model}" indisponible (${err.status || '?'}), tentative suivante…`);
+      lastError = err;
+    }
+  }
+  throw new Error(`Tous les modèles IA sont indisponibles pour le moment. Réessayez dans quelques instants. (Dernière erreur : ${lastError?.message})`);
 }
 
 // Scanne une photo de fiche de classe et renvoie les noms détectés (à valider côté client avant import)
