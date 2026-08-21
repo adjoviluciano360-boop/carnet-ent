@@ -31,7 +31,7 @@ Views._fileToImageDataUrl = function (file) {
         try {
           const pdf = await pdfjsLib.getDocument({ data: reader.result }).promise;
           const page = await pdf.getPage(1);
-          const viewport = page.getViewport({ scale: 2 });
+          const viewport = page.getViewport({ scale: 1.5 });
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
