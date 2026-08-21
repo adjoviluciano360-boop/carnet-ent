@@ -4,7 +4,7 @@ import { supabaseAdmin, requireAuth, requireSchoolRole } from '../middleware/aut
 const router = Router();
 
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free';
-const OPENROUTER_VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'google/gemini-2.0-flash-exp:free';
+const OPENROUTER_VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'google/gemma-4-31b-it:free';
 
 const SYSTEM_PROMPT = `Tu es l'assistant de saisie de notes de "Carnet", un ENT scolaire béninois.
 Un professeur va te décrire une ou plusieurs notes en langage naturel (français).
@@ -182,7 +182,15 @@ Corrige les fautes d'écriture évidentes mais n'invente jamais de nom.
 Ignore les numéros de ligne, en-têtes, ou toute autre information qui n'est pas un nom d'élève.
 Format de réponse EXACT, sans aucun texte autour : ["Nom Prénom", "Nom Prénom", ...]`;
 
-async function callOpenRouterVision(imageBase64) {
+const SUBJECTS_SYSTEM_PROMPT = `Tu extrais une liste de matières scolaires et leurs coefficients à partir d'une
+photo de fiche (manuscrite ou tapée, souvent un tableau à deux colonnes : Matière | Coefficient).
+Renvoie UNIQUEMENT un tableau JSON d'objets {"name": "...", "coefficient": nombre}.
+Si un coefficient n'est pas lisible ou absent pour une matière, mets 1 par défaut.
+N'invente jamais de matière qui n'apparaît pas sur la photo.
+Format de réponse EXACT, sans aucun texte autour :
+[{"name":"Mathématiques","coefficient":4},{"name":"Français","coefficient":3}]`;
+
+async function callOpenRouterVision(imageBase64, systemPrompt, userText) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY manquant côté serveur');
 
@@ -195,11 +203,11 @@ async function callOpenRouterVision(imageBase64) {
     body: JSON.stringify({
       model: OPENROUTER_VISION_MODEL,
       messages: [
-        { role: 'system', content: ROSTER_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         {
           role: 'user',
           content: [
-            { type: 'text', text: 'Voici la photo de la fiche de classe. Extrais la liste des noms.' },
+            { type: 'text', text: userText },
             { type: 'image_url', image_url: { url: imageBase64 } }
           ]
         }
@@ -220,7 +228,7 @@ router.post('/roster-scan', requireAuth, requireSchoolRole(['admin', 'prof']), a
     const { image_base64 } = req.body;
     if (!image_base64) return res.status(400).json({ error: 'image_base64 requis' });
 
-    const raw = await callOpenRouterVision(image_base64);
+    const raw = await callOpenRouterVision(image_base64, ROSTER_SYSTEM_PROMPT, 'Voici la photo de la fiche de classe. Extrais la liste des noms.');
     const match = raw.match(/\[[\s\S]*\]/);
     if (!match) return res.status(422).json({ error: "L'IA n'a pas pu extraire de liste. Réessayez avec une photo plus nette." });
 
@@ -234,6 +242,32 @@ router.post('/roster-scan', requireAuth, requireSchoolRole(['admin', 'prof']), a
     res.json({ names });
   } catch (err) {
     console.error('AI roster-scan error:', err);
+    res.status(500).json({ error: err.message || 'Erreur assistant IA' });
+  }
+});
+
+// Scanne une photo de fiche matières/coefficients et renvoie la liste détectée
+router.post('/subjects-scan', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  try {
+    const { image_base64 } = req.body;
+    if (!image_base64) return res.status(400).json({ error: 'image_base64 requis' });
+
+    const raw = await callOpenRouterVision(image_base64, SUBJECTS_SYSTEM_PROMPT, 'Voici la photo de la fiche matières/coefficients. Extrais la liste.');
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return res.status(422).json({ error: "L'IA n'a pas pu extraire de liste. Réessayez avec une photo plus nette." });
+
+    let subjects;
+    try {
+      subjects = JSON.parse(match[0])
+        .filter((s) => s && typeof s.name === 'string' && s.name.trim().length > 0)
+        .map((s) => ({ name: s.name.trim(), coefficient: Number(s.coefficient) > 0 ? Number(s.coefficient) : 1 }));
+    } catch {
+      return res.status(422).json({ error: "Erreur de lecture de la réponse de l'IA. Réessayez." });
+    }
+
+    res.json({ subjects });
+  } catch (err) {
+    console.error('AI subjects-scan error:', err);
     res.status(500).json({ error: err.message || 'Erreur assistant IA' });
   }
 });

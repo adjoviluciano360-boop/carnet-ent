@@ -114,7 +114,7 @@ router.get('/student/:studentId/bulletin', requireAuth, async (req, res) => {
 
   const { data: grades, error } = await supabaseAdmin
     .from('grades')
-    .select('subject_id, subjects(name, interro_weight, devoir_weight), type, score, max_score, coefficient, label, graded_at')
+    .select('subject_id, subjects(name, interro_weight, devoir_weight, coefficient), type, score, max_score, coefficient, label, graded_at')
     .eq('student_id', req.params.studentId);
   if (error) return res.status(400).json({ error: error.message });
 
@@ -125,6 +125,7 @@ router.get('/student/:studentId/bulletin', requireAuth, async (req, res) => {
       bySubject[key] = {
         subject_id: key,
         subject_name: g.subjects.name,
+        subject_coefficient: g.subjects.coefficient ?? 1,
         interro_weight: g.subjects.interro_weight ?? school.default_interro_weight,
         devoir_weight: g.subjects.devoir_weight ?? school.default_devoir_weight,
         interro: { totalWeighted: 0, totalCoef: 0, count: 0 },
@@ -165,6 +166,7 @@ router.get('/student/:studentId/bulletin', requireAuth, async (req, res) => {
     return {
       subject_id: s.subject_id,
       subject_name: s.subject_name,
+      subject_coefficient: s.subject_coefficient,
       interro_weight: s.interro_weight,
       devoir_weight: s.devoir_weight,
       moyenne_interro: moyInterro,
@@ -176,9 +178,12 @@ router.get('/student/:studentId/bulletin', requireAuth, async (req, res) => {
     };
   });
 
+  // Moyenne générale du bulletin : pondérée par le coefficient de chaque matière
+  // (ex: Maths coef 4 pèse 4x plus que EPS coef 1), pas une simple moyenne arithmétique.
   const overall = result.filter((r) => r.moyenne_generale !== null);
-  const moyenne_generale_bulletin = overall.length
-    ? +(overall.reduce((sum, r) => sum + r.moyenne_generale, 0) / overall.length).toFixed(2)
+  const totalCoefBulletin = overall.reduce((sum, r) => sum + r.subject_coefficient, 0);
+  const moyenne_generale_bulletin = totalCoefBulletin
+    ? +(overall.reduce((sum, r) => sum + r.moyenne_generale * r.subject_coefficient, 0) / totalCoefBulletin).toFixed(2)
     : null;
 
   const enAttente = result.filter((r) => r.statut !== 'complet').map((r) => ({

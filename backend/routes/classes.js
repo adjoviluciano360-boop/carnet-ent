@@ -124,14 +124,57 @@ router.get('/my/:role', requireAuth, requireSchoolRole(), async (req, res) => {
 // ---- MATIÈRES ----
 
 router.post('/subjects', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
-  const { name, color } = req.body;
+  const { name, color, coefficient } = req.body;
   const { data, error } = await supabaseAdmin
     .from('subjects')
-    .insert({ school_id: req.schoolId, name, color })
+    .insert({ school_id: req.schoolId, name, color, coefficient: coefficient > 0 ? coefficient : 1 })
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json(data);
+});
+
+// Import groupé de matières + coefficients (après scan IA d'une fiche) — crée ou met à jour par nom
+router.post('/subjects/scan-import', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
+  const { subjects } = req.body;
+  if (!Array.isArray(subjects) || subjects.length === 0) {
+    return res.status(400).json({ error: 'subjects requis (tableau non vide)' });
+  }
+
+  const results = [];
+  for (const s of subjects) {
+    const name = (s.name || '').trim();
+    if (!name) continue;
+    const coefficient = Number(s.coefficient) > 0 ? Number(s.coefficient) : 1;
+
+    const { data: existing } = await supabaseAdmin
+      .from('subjects')
+      .select('id')
+      .eq('school_id', req.schoolId)
+      .ilike('name', name)
+      .maybeSingle();
+
+    if (existing) {
+      const { data, error } = await supabaseAdmin
+        .from('subjects')
+        .update({ coefficient })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      if (error) return res.status(400).json({ error: error.message });
+      results.push(data);
+    } else {
+      const { data, error } = await supabaseAdmin
+        .from('subjects')
+        .insert({ school_id: req.schoolId, name, coefficient })
+        .select()
+        .single();
+      if (error) return res.status(400).json({ error: error.message });
+      results.push(data);
+    }
+  }
+
+  res.status(201).json(results);
 });
 
 router.get('/subjects/all', requireAuth, requireSchoolRole(), async (req, res) => {
@@ -144,12 +187,14 @@ router.get('/subjects/all', requireAuth, requireSchoolRole(), async (req, res) =
   res.json(data);
 });
 
-// Régler les poids interro/devoir spécifiques à une matière (NULL = hérite du réglage école)
+// Régler le coefficient (poids dans le bulletin) + interro/devoir spécifiques à une matière
 router.put('/subjects/:subjectId/weights', requireAuth, requireSchoolRole(['admin']), async (req, res) => {
-  const { interro_weight, devoir_weight } = req.body;
+  const { interro_weight, devoir_weight, coefficient } = req.body;
+  const update = { interro_weight, devoir_weight };
+  if (coefficient !== undefined) update.coefficient = Number(coefficient) > 0 ? Number(coefficient) : 1;
   const { data, error } = await supabaseAdmin
     .from('subjects')
-    .update({ interro_weight, devoir_weight })
+    .update(update)
     .eq('id', req.params.subjectId)
     .select()
     .single();

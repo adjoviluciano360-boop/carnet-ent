@@ -144,8 +144,9 @@ Views.renderClasses = async function (container) {
   container.innerHTML = `
     <div class="main-header">
       <h1 class="main-title">Filières, classes & matières</h1>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn-secondary" id="add-track-btn">+ Filière</button>
+        <button class="btn-secondary" id="scan-subjects-btn">📷 Scanner matières</button>
         <button class="btn-secondary" id="add-subject-btn">+ Matière</button>
         <button class="btn-primary" id="add-class-btn">+ Salle</button>
       </div>
@@ -158,12 +159,12 @@ Views.renderClasses = async function (container) {
       </div>
       <div class="card">
         <div class="card-title">Matières (${subjects.length})</div>
-        ${subjects.length === 0 ? '<div class="empty-state">Aucune matière. Créez-en une.</div>' :
+        ${subjects.length === 0 ? '<div class="empty-state">Aucune matière. Créez-en une, ou scannez une fiche.</div>' :
           subjects.map((s) => `
             <div class="list-row">
-              <span>${esc(s.name)}</span>
+              <span>${esc(s.name)} <span class="pill pill-amber">coef ${s.coefficient ?? 1}</span></span>
               <button class="link-btn" data-subject-weights="${s.id}" data-subject-name="${esc(s.name)}"
-                data-iw="${s.interro_weight ?? ''}" data-dw="${s.devoir_weight ?? ''}">Coefficients</button>
+                data-iw="${s.interro_weight ?? ''}" data-dw="${s.devoir_weight ?? ''}" data-coef="${s.coefficient ?? 1}">Réglages</button>
             </div>`).join('')}
       </div>
     </div>
@@ -174,8 +175,13 @@ Views.renderClasses = async function (container) {
   document.querySelectorAll('[data-subject-weights]').forEach((btn) => {
     btn.addEventListener('click', () => {
       openModal(`
-        <h3>Coefficients — ${esc(btn.dataset.subjectName)}</h3>
-        <p style="font-size:0.82rem;color:var(--ink-soft);">Laisser vide pour utiliser le réglage par défaut de l'école.</p>
+        <h3>Réglages — ${esc(btn.dataset.subjectName)}</h3>
+        <label>Coefficient de la matière (poids dans la moyenne générale du bulletin)
+          <input id="m-coef" type="number" step="0.5" value="${btn.dataset.coef}" placeholder="Ex : 4" />
+        </label>
+        <p style="font-size:0.82rem;color:var(--ink-soft);">
+          Poids interro/devoir : laisser vide pour utiliser le réglage par défaut de l'école.
+        </p>
         <label>Poids interro<input id="m-iw" type="number" step="0.5" value="${btn.dataset.iw}" placeholder="Ex : 1" /></label>
         <label>Poids devoir<input id="m-dw" type="number" step="0.5" value="${btn.dataset.dw}" placeholder="Ex : 2" /></label>
         <div class="modal-actions">
@@ -186,15 +192,19 @@ Views.renderClasses = async function (container) {
       document.getElementById('m-save').addEventListener('click', async () => {
         const iw = document.getElementById('m-iw').value;
         const dw = document.getElementById('m-dw').value;
+        const coef = document.getElementById('m-coef').value;
         await Api.put(`/classes/subjects/${btn.dataset.subjectWeights}/weights`, {
           interro_weight: iw === '' ? null : Number(iw),
-          devoir_weight: dw === '' ? null : Number(dw)
+          devoir_weight: dw === '' ? null : Number(dw),
+          coefficient: coef === '' ? 1 : Number(coef)
         });
         closeModal();
         navigateTo('classes');
       });
     });
   });
+
+  document.getElementById('scan-subjects-btn').addEventListener('click', () => Views._openSubjectsScan());
 
   document.getElementById('add-track-btn').addEventListener('click', () => {
     openModal(`
@@ -324,6 +334,11 @@ Views._openRosterScan = function (classId, className) {
   document.getElementById('roster-file').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert("Ce fichier n'est pas une image (ex: PDF). Choisissez une photo (JPG, PNG) de la fiche.");
+      e.target.value = '';
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       base64Image = reader.result;
@@ -375,6 +390,78 @@ Views._renderRosterResult = function (holder, created, className) {
     <div class="modal-actions">
       <button class="btn-primary" onclick="closeModal(); navigateTo('classes');">Terminer</button>
     </div>`;
+};
+
+// Scan d'une fiche matières/coefficients : photo -> extraction IA -> révision -> import
+Views._openSubjectsScan = function () {
+  openModal(`
+    <h3>Scanner une fiche matières & coefficients</h3>
+    <p style="font-size:0.82rem;color:var(--ink-soft);">
+      Prenez en photo un tableau "Matière — Coefficient" (manuscrit ou tapé). L'IA détecte les paires ;
+      vérifiez avant l'import. Si une matière existe déjà, son coefficient est mis à jour.
+    </p>
+    <label>Photo de la fiche<input type="file" id="subj-file" accept="image/*" capture="environment" /></label>
+    <div id="subj-preview" style="margin:10px 0;"></div>
+    <div class="modal-actions">
+      <button class="link-btn" id="m-cancel">Annuler</button>
+      <button class="btn-primary" id="subj-scan-btn">Analyser la photo</button>
+    </div>
+    <div id="subj-review-holder" style="margin-top:16px;"></div>`);
+  document.getElementById('m-cancel').addEventListener('click', closeModal);
+
+  let base64Image = null;
+  document.getElementById('subj-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert("Ce fichier n'est pas une image (ex: PDF). Choisissez une photo (JPG, PNG) de la fiche.");
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      base64Image = reader.result;
+      document.getElementById('subj-preview').innerHTML =
+        `<img src="${base64Image}" style="max-width:100%;max-height:200px;border-radius:10px;" />`;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('subj-scan-btn').addEventListener('click', async () => {
+    if (!base64Image) { alert('Choisissez ou prenez une photo d\'abord.'); return; }
+    const reviewHolder = document.getElementById('subj-review-holder');
+    reviewHolder.innerHTML = '<div class="empty-state">Analyse de la photo par l\'IA…</div>';
+    try {
+      const res = await Api.post('/ai/subjects-scan', { image_base64: base64Image });
+      reviewHolder.innerHTML = `
+        <label>Matières détectées — corrigez si besoin, une ligne par matière au format "Nom, Coefficient"
+          <textarea id="subj-list" rows="8">${esc(res.subjects.map((s) => `${s.name}, ${s.coefficient}`).join('\n'))}</textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="btn-primary" id="subj-import-btn">Importer ces matières</button>
+        </div>`;
+      document.getElementById('subj-import-btn').addEventListener('click', async () => {
+        const lines = document.getElementById('subj-list').value.split('\n').map((l) => l.trim()).filter(Boolean);
+        const subjects = lines.map((line) => {
+          const [name, coef] = line.split(',').map((p) => p.trim());
+          return { name, coefficient: Number(coef) > 0 ? Number(coef) : 1 };
+        }).filter((s) => s.name);
+        if (subjects.length === 0) { alert('Aucune matière à importer.'); return; }
+        const created = await Api.post('/classes/subjects/scan-import', { subjects });
+        reviewHolder.innerHTML = `
+          <div class="card-eyebrow">Import terminé — ${created.length} matière(s)</div>
+          <table class="data-table">
+            <thead><tr><th>Matière</th><th>Coefficient</th></tr></thead>
+            <tbody>${created.map((s) => `<tr><td>${esc(s.name)}</td><td><strong>${s.coefficient}</strong></td></tr>`).join('')}</tbody>
+          </table>
+          <div class="modal-actions">
+            <button class="btn-primary" onclick="closeModal(); navigateTo('classes');">Terminer</button>
+          </div>`;
+      });
+    } catch (err) {
+      reviewHolder.innerHTML = `<div class="empty-state">Erreur : ${esc(err.error || 'analyse impossible.')}</div>`;
+    }
+  });
 };
 
 // ============================================================
@@ -674,12 +761,13 @@ Views._renderBulletin = function (container, bulletin, title) {
       <div class="score-big">${bulletin.moyenne_generale_bulletin ?? '—'} / 20</div>
     </div>
     <table class="data-table">
-      <thead><tr><th>Matière</th><th>Moy. interro</th><th>Moy. devoir</th><th>Moy. générale</th></tr></thead>
+      <thead><tr><th>Matière</th><th>Coef</th><th>Moy. interro</th><th>Moy. devoir</th><th>Moy. générale</th></tr></thead>
       <tbody>
-        ${bulletin.subjects.length === 0 ? `<tr><td colspan="4" class="empty-state">Aucune note pour l'instant.</td></tr>` :
+        ${bulletin.subjects.length === 0 ? `<tr><td colspan="5" class="empty-state">Aucune note pour l'instant.</td></tr>` :
           bulletin.subjects.map((s) => `
             <tr>
               <td>${esc(s.subject_name)}</td>
+              <td>${s.subject_coefficient ?? 1}</td>
               <td>${s.moyenne_interro ?? '—'}</td>
               <td>${s.moyenne_devoir ?? '—'}</td>
               <td><strong>${s.moyenne_generale ?? '—'}</strong></td>
