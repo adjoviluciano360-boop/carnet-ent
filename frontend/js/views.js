@@ -9,6 +9,47 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
 }
 
+// Convertit un fichier importé (image OU PDF, première page) en data URL image (base64)
+// utilisable directement par l'assistant IA de scan (roster / matières).
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+Views._fileToImageDataUrl = function (file) {
+  return new Promise((resolve, reject) => {
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    if (file.type === 'application/pdf') {
+      if (!window.pdfjsLib) { reject(new Error('Lecteur PDF non disponible.')); return; }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const pdf = await pdfjsLib.getDocument({ data: reader.result }).promise;
+          const page = await pdf.getPage(1);
+          const viewport = page.getViewport({ scale: 2 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+          resolve(canvas.toDataURL('image/png'));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
+    reject(new Error('Format non pris en charge. Utilisez une image (JPG, PNG) ou un PDF.'));
+  });
+};
+
 // ============================================================
 // DASHBOARD
 // ============================================================
@@ -318,10 +359,10 @@ Views._openRosterScan = function (classId, className) {
   openModal(`
     <h3>Fiche élèves — ${esc(className)}</h3>
     <p style="font-size:0.82rem;color:var(--ink-soft);">
-      Prenez en photo (ou importez) la liste des élèves de cette salle. L'IA va lire les noms ;
+      Prenez en photo (ou importez une image/PDF) la liste des élèves de cette salle. L'IA va lire les noms ;
       vous pourrez les corriger avant l'import définitif. Un matricule sera généré pour chacun.
     </p>
-    <label>Photo de la fiche<input type="file" id="roster-file" accept="image/*" capture="environment" /></label>
+    <label>Photo ou PDF de la fiche<input type="file" id="roster-file" accept="image/*,application/pdf" capture="environment" /></label>
     <div id="roster-preview" style="margin:10px 0;"></div>
     <div class="modal-actions">
       <button class="link-btn" id="m-cancel">Annuler</button>
@@ -331,21 +372,19 @@ Views._openRosterScan = function (classId, className) {
   document.getElementById('m-cancel').addEventListener('click', closeModal);
 
   let base64Image = null;
-  document.getElementById('roster-file').addEventListener('change', (e) => {
+  document.getElementById('roster-file').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert("Ce fichier n'est pas une image (ex: PDF). Choisissez une photo (JPG, PNG) de la fiche.");
+    const preview = document.getElementById('roster-preview');
+    preview.innerHTML = '<div class="empty-state">Préparation du fichier…</div>';
+    try {
+      base64Image = await Views._fileToImageDataUrl(file);
+      preview.innerHTML = `<img src="${base64Image}" style="max-width:100%;max-height:200px;border-radius:10px;" />`;
+    } catch (err) {
+      preview.innerHTML = '';
+      alert(err.message || 'Impossible de lire ce fichier.');
       e.target.value = '';
-      return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      base64Image = reader.result;
-      document.getElementById('roster-preview').innerHTML =
-        `<img src="${base64Image}" style="max-width:100%;max-height:200px;border-radius:10px;" />`;
-    };
-    reader.readAsDataURL(file);
   });
 
   document.getElementById('roster-scan-btn').addEventListener('click', async () => {
@@ -397,10 +436,10 @@ Views._openSubjectsScan = function () {
   openModal(`
     <h3>Scanner une fiche matières & coefficients</h3>
     <p style="font-size:0.82rem;color:var(--ink-soft);">
-      Prenez en photo un tableau "Matière — Coefficient" (manuscrit ou tapé). L'IA détecte les paires ;
+      Prenez en photo (ou importez une image/PDF) un tableau "Matière — Coefficient" (manuscrit ou tapé). L'IA détecte les paires ;
       vérifiez avant l'import. Si une matière existe déjà, son coefficient est mis à jour.
     </p>
-    <label>Photo de la fiche<input type="file" id="subj-file" accept="image/*" capture="environment" /></label>
+    <label>Photo ou PDF de la fiche<input type="file" id="subj-file" accept="image/*,application/pdf" capture="environment" /></label>
     <div id="subj-preview" style="margin:10px 0;"></div>
     <div class="modal-actions">
       <button class="link-btn" id="m-cancel">Annuler</button>
@@ -410,21 +449,19 @@ Views._openSubjectsScan = function () {
   document.getElementById('m-cancel').addEventListener('click', closeModal);
 
   let base64Image = null;
-  document.getElementById('subj-file').addEventListener('change', (e) => {
+  document.getElementById('subj-file').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert("Ce fichier n'est pas une image (ex: PDF). Choisissez une photo (JPG, PNG) de la fiche.");
+    const preview = document.getElementById('subj-preview');
+    preview.innerHTML = '<div class="empty-state">Préparation du fichier…</div>';
+    try {
+      base64Image = await Views._fileToImageDataUrl(file);
+      preview.innerHTML = `<img src="${base64Image}" style="max-width:100%;max-height:200px;border-radius:10px;" />`;
+    } catch (err) {
+      preview.innerHTML = '';
+      alert(err.message || 'Impossible de lire ce fichier.');
       e.target.value = '';
-      return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      base64Image = reader.result;
-      document.getElementById('subj-preview').innerHTML =
-        `<img src="${base64Image}" style="max-width:100%;max-height:200px;border-radius:10px;" />`;
-    };
-    reader.readAsDataURL(file);
   });
 
   document.getElementById('subj-scan-btn').addEventListener('click', async () => {
